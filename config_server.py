@@ -49,6 +49,7 @@ non-destructive checks.</p>
 <input id="test_ssid" placeholder="SSID" size="24">
 <input id="test_pwd" type="password" placeholder="Password" size="24">
 <button onclick="testCreds()">Test connection</button>
+<button id="add_btn" onclick="addValidatedToJson()" disabled title="Enabled after a successful Test connection">Add to known networks</button>
 <button onclick="testAll()">Test all configured</button>
 <pre id="test_log" style="background:#f4f4f4;padding:8px;margin-top:10px;max-height:200px;overflow:auto;"></pre>
 </fieldset>
@@ -88,6 +89,12 @@ function logLine(line, err){
   log.scrollTop=log.scrollHeight;
 }
 function clearLog(){document.getElementById('test_log').textContent='';}
+let lastValidated=null;
+function invalidateAdd(){
+  lastValidated=null;
+  const b=document.getElementById('add_btn');
+  if(b){b.disabled=true;}
+}
 function doValidate(ssid, pwd){
   return fetch('/validate',{method:'POST',headers:{'Content-Type':'application/json'},
                             body:JSON.stringify({ssid:ssid,password:pwd})})
@@ -98,13 +105,44 @@ function testCreds(){
   const pwd=document.getElementById('test_pwd').value;
   if(!ssid){return setStatus('Enter an SSID to test.',true);}
   clearLog();
+  invalidateAdd();
   setStatus('Testing "'+ssid+'"... (up to ~8s, the AP may briefly hiccup)');
   logLine('> '+ssid+' ...');
   doValidate(ssid, pwd).then(d=>{
     logLine((d.ok?'  ok: ':'  FAIL: ')+(d.message||''), !d.ok);
-    if(d.ok){setStatus('OK: '+(d.message||'connected.'));}
-    else{setStatus('Failed: '+(d.message||'unknown error'),true);}
+    if(d.ok){
+      setStatus('OK: '+(d.message||'connected.')+' Click "Add to known networks" to save it.');
+      lastValidated={ssid:ssid, password:pwd};
+      const b=document.getElementById('add_btn');
+      if(b){b.disabled=false;}
+    }else{
+      setStatus('Failed: '+(d.message||'unknown error'),true);
+    }
   }).catch(e=>{logLine('  request error: '+e,true); setStatus('Test request failed: '+e,true);});
+}
+function addValidatedToJson(){
+  if(!lastValidated){return setStatus('Test a network successfully first.',true);}
+  let cfg;
+  try{cfg=JSON.parse(document.getElementById('config').value);}
+  catch(e){return setStatus('Cannot parse JSON above: '+e.message,true);}
+  if(!Array.isArray(cfg.known_networks)){cfg.known_networks=[];}
+  let found=false;
+  for(let i=0;i<cfg.known_networks.length;i++){
+    const n=cfg.known_networks[i]||{};
+    if(n.ssid===lastValidated.ssid){
+      cfg.known_networks[i]=Object.assign({},n,{ssid:lastValidated.ssid,password:lastValidated.password});
+      found=true;
+      break;
+    }
+  }
+  if(!found){
+    cfg.known_networks.push({ssid:lastValidated.ssid, password:lastValidated.password});
+  }
+  document.getElementById('config').value=JSON.stringify(cfg,null,2);
+  const action=found?'Updated':'Added';
+  logLine('  '+action.toLowerCase()+' "'+lastValidated.ssid+'" in known_networks (not yet saved).');
+  setStatus(action+' "'+lastValidated.ssid+'" in known_networks. Click "Save & Apply" to persist.');
+  invalidateAdd();
 }
 async function testAll(){
   let cfg;
@@ -131,6 +169,10 @@ async function testAll(){
   setStatus('Done. '+summary, failCount>0);
 }
 loadConfig();
+['test_ssid','test_pwd'].forEach(function(id){
+  const el=document.getElementById(id);
+  if(el){el.addEventListener('input', invalidateAdd);}
+});
 </script></body></html>"""
 
 

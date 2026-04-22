@@ -59,10 +59,11 @@ _STARTUP_DELAY_SECONDS = 5
 _LOOP_PERIOD_MS = 40  # ~25 Hz
 _CONFIG_PATH = "/networks.json"
 _UDP_LISTEN_PORT = 8000
-# Duration of the trippy rainbow "hello, I joined the network" banner.
-# Long enough to be unmistakable from across a studio; short enough that it
-# doesn't delay actual recording work.
-_CONNECT_CELEBRATION_MS = 4000
+# Duration of the Pokeball "hello, I joined the network" banner.
+# Long enough for the full fade-in -> three shakes -> settle -> capture
+# flash sequence to complete visibly; short enough that it doesn't delay
+# actual recording work.
+_CONNECT_CELEBRATION_MS = 5500
 # Treat the config page as "actively being used" for this long after the
 # last HTTP request on the config server. Inside this window, ap_mode
 # switches to the auth-failed flash pattern if every known password has
@@ -128,12 +129,21 @@ def _init_boot_button(pin_num):
 
 
 def _read_config_server_password(config_path):
+    """Read the Basic Auth password for the config page out of networks.json.
+
+    Defaults to ``""`` when the file is unreadable or the key is absent,
+    which makes ConfigServer skip auth entirely. The old default of
+    ``"micropython"`` was surprising in the field -- operators who only
+    ever saw the device in AP mode had no way to know the password, and
+    the device is only reachable on a local AP anyway, so the Basic Auth
+    layer was net-negative for UX.
+    """
     try:
         with open(config_path, "r") as f:
             cfg = json.loads(f.read())
-        return cfg.get("config_server", {}).get("password", "micropython")
+        return cfg.get("config_server", {}).get("password", "")
     except Exception:
-        return "micropython"
+        return ""
 
 
 def run():
@@ -219,6 +229,11 @@ def run():
             if connected_at_ms is None:
                 connected_at_ms = now_ms
             controller.tick()
+            # Keep the indicator's "on" colour in sync with whatever the
+            # Ableton plugin is currently sending. The plugin transmits
+            # RGB with every ON, so this is cheap and means a master-
+            # track colour change mid-take lights up on the next render.
+            indicator.light_on_color = controller.light_color
             if time.ticks_diff(now_ms, connected_at_ms) < _CONNECT_CELEBRATION_MS:
                 display_state = "connected"
             else:

@@ -2,8 +2,8 @@ Light Setup Instructions (Run once per studio)
 
 1. Connect the light chip to the battery pack. Wait until it flashes yellow.
 2. Once it is on, press the button on the side of the battery pack to enable "Trickle Charge Mode". A small green dot will appear on the battery display.
-3. At this point, connect your laptop to the "Studio-Light-Setup" wifi access point
-4. Once connected, open your browser and go to http://192.168.4.1:8080
+3. At this point, connect your laptop to the "Studio-Light-Setup" wifi access point (no password)
+4. Once connected, open your browser and go to http://192.168.4.1:8080 (no login required)
 5. Add your wifi information into the "known networks" json thing, using the existing networks as a template, and press "save"
 6. The light will turn green to indicate that it's joined the network, and then it will turn off. It's now ready
 
@@ -17,3 +17,17 @@ Ableton Setup Instructions
 6. In Ableton settings, click "Link, Tempo & MIDI"
 7. Under "MIDI", Select "StudioLight" from the "Control Surface" dropdown menu. If StudioLight doesn't show up, try restarting Ableton. The "Input" and "Output" columns should say "None".
 8. When you click the record button in Ableton, the light should now turn on.
+
+Choosing the Light Color
+
+By default the recording light glows red. To pick a different color, just
+change the color of your Ableton Master track (right-click the Master
+track header in the mixer, then pick a color from the palette). The
+recording light will switch to that color the next time you record, and
+will also update live if you change it while recording.
+
+Change the master track color back to its original (or any color that
+matches what it was when Ableton started) to revert the light to the
+default red. The master track color is only used as the "recording
+light color picker" because it isn't typically changed for other
+reasons.
