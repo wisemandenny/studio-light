@@ -11,6 +11,11 @@ Routes:
   GET  /config   -> current networks.json contents as JSON
   POST /config   -> validate + persist new networks.json, then invoke the
                     ``on_saved`` callback (typically WifiManager.reload_and_reconnect)
+  POST /validate -> live-test a single {ssid, password} pair against the
+                    real radio, without saving anything. Delegates to the
+                    ``validator`` callable supplied by the caller
+                    (typically WifiManager.validate_credentials). Returns
+                    ``{"ok": bool, "ssid": ..., "message": ...}`` as JSON.
 """
 import json
 import socket
@@ -24,13 +29,30 @@ _INDEX_HTML = """<!DOCTYPE html>
 body{font-family:Arial,sans-serif;margin:20px;max-width:720px;}
 textarea{width:100%;font-family:monospace;}
 button{margin-right:8px;padding:8px 14px;}
+input{padding:6px;margin-right:6px;}
+fieldset{margin-top:18px;padding:12px;border:1px solid #ccc;}
+legend{padding:0 6px;font-weight:bold;}
 #status{margin-top:10px;min-height:1.5em;}
 </style></head><body>
 <h2>StudioLight Wi-Fi Setup</h2>
 <textarea id="config" rows="22" placeholder="Loading..."></textarea><br><br>
 <button onclick="loadConfig()">Reload</button>
-<button onclick="validate()">Validate JSON</button>
+<button onclick="validateJson()">Validate JSON</button>
 <button onclick="saveConfig()">Save &amp; Apply</button>
+
+<fieldset>
+<legend>Test Wi-Fi credentials</legend>
+<p style="margin-top:0;">Try a single SSID/password pair against the radio before
+you save, or batch-test everything under <code>known_networks</code> in
+the JSON above. Either way, the light stays in setup mode -- these are
+non-destructive checks.</p>
+<input id="test_ssid" placeholder="SSID" size="24">
+<input id="test_pwd" type="password" placeholder="Password" size="24">
+<button onclick="testCreds()">Test connection</button>
+<button onclick="testAll()">Test all configured</button>
+<pre id="test_log" style="background:#f4f4f4;padding:8px;margin-top:10px;max-height:200px;overflow:auto;"></pre>
+</fieldset>
+
 <div id="status"></div>
 <script>
 function setStatus(msg, err){
@@ -44,7 +66,7 @@ function loadConfig(){
     catch(e){document.getElementById('config').value=d; setStatus('Loaded raw (not JSON).',true);}
   }).catch(e=>setStatus('Load failed: '+e,true));
 }
-function validate(){
+function validateJson(){
   try{const v=JSON.parse(document.getElementById('config').value);
       if(!v.known_networks||!v.access_point) throw new Error('missing sections');
       setStatus('JSON looks valid.');
@@ -57,17 +79,72 @@ function saveConfig(){
     .then(r=>r.text()).then(()=>setStatus('Saved. Device will reconnect.'))
     .catch(e=>setStatus('Save failed: '+e,true));
 }
+function logLine(line, err){
+  const log=document.getElementById('test_log');
+  const div=document.createElement('div');
+  div.textContent=line;
+  if(err){div.style.color='#b00';}
+  log.appendChild(div);
+  log.scrollTop=log.scrollHeight;
+}
+function clearLog(){document.getElementById('test_log').textContent='';}
+function doValidate(ssid, pwd){
+  return fetch('/validate',{method:'POST',headers:{'Content-Type':'application/json'},
+                            body:JSON.stringify({ssid:ssid,password:pwd})})
+           .then(r=>r.json());
+}
+function testCreds(){
+  const ssid=document.getElementById('test_ssid').value;
+  const pwd=document.getElementById('test_pwd').value;
+  if(!ssid){return setStatus('Enter an SSID to test.',true);}
+  clearLog();
+  setStatus('Testing "'+ssid+'"... (up to ~8s, the AP may briefly hiccup)');
+  logLine('> '+ssid+' ...');
+  doValidate(ssid, pwd).then(d=>{
+    logLine((d.ok?'  ok: ':'  FAIL: ')+(d.message||''), !d.ok);
+    if(d.ok){setStatus('OK: '+(d.message||'connected.'));}
+    else{setStatus('Failed: '+(d.message||'unknown error'),true);}
+  }).catch(e=>{logLine('  request error: '+e,true); setStatus('Test request failed: '+e,true);});
+}
+async function testAll(){
+  let cfg;
+  try{cfg=JSON.parse(document.getElementById('config').value);}
+  catch(e){return setStatus('Cannot parse JSON above: '+e.message,true);}
+  const list=Array.isArray(cfg.known_networks)?cfg.known_networks:[];
+  if(list.length===0){return setStatus('No known_networks to test.',true);}
+  clearLog();
+  setStatus('Testing '+list.length+' network(s)... (~'+(list.length*8)+'s max)');
+  let okCount=0, failCount=0;
+  for(let i=0;i<list.length;i++){
+    const n=list[i]||{};
+    const ssid=n.ssid||'';
+    const pwd=n.password||'';
+    logLine('['+(i+1)+'/'+list.length+'] > '+(ssid||'<no ssid>')+' ...');
+    if(!ssid){logLine('  FAIL: entry has no ssid',true); failCount++; continue;}
+    try{
+      const d=await doValidate(ssid, pwd);
+      if(d.ok){logLine('  ok: '+(d.message||'')); okCount++;}
+      else{logLine('  FAIL: '+(d.message||''),true); failCount++;}
+    }catch(e){logLine('  request error: '+e,true); failCount++;}
+  }
+  const summary=okCount+' ok, '+failCount+' failed';
+  setStatus('Done. '+summary, failCount>0);
+}
 loadConfig();
 </script></body></html>"""
 
 
 class ConfigServer:
     def __init__(self, port=8080, password="micropython",
-                 config_path="/networks.json", on_saved=None):
+                 config_path="/networks.json", on_saved=None,
+                 validator=None):
         self.port = port
         self.password = password
         self.config_path = config_path
         self.on_saved = on_saved
+        # validator(ssid, password) -> (ok: bool, message: str)
+        # Optional. If None, /validate returns 501.
+        self.validator = validator
         self._sock = None
         self.activity_at_ms = 0
 
@@ -155,6 +232,8 @@ class ConfigServer:
 
         if request.startswith("POST /config"):
             return self._post_config(request)
+        if request.startswith("POST /validate"):
+            return self._post_validate(request)
         if request.startswith("GET /config"):
             return self._get_config()
         if request.startswith("GET / ") or request.startswith("GET /index"):
@@ -202,3 +281,31 @@ class ConfigServer:
                 print("config_server: on_saved callback error:", e)
         return ("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n"
                 "Saved. Device will reconnect.")
+
+    def _post_validate(self, request):
+        if self.validator is None:
+            return ("HTTP/1.1 501 Not Implemented\r\n"
+                    "Content-Type: application/json\r\n\r\n"
+                    "{\"ok\":false,\"message\":\"validator not configured\"}")
+        idx = request.find("\r\n\r\n")
+        body = request[idx + 4:] if idx >= 0 else ""
+        try:
+            data = json.loads(body) if body else {}
+            ssid = data.get("ssid", "")
+            pwd = data.get("password", "")
+        except Exception as e:
+            payload = json.dumps({"ok": False,
+                                  "message": "bad request: {}".format(e)})
+            return ("HTTP/1.1 400 Bad Request\r\n"
+                    "Content-Type: application/json\r\n\r\n{}".format(payload))
+        try:
+            ok, message = self.validator(ssid, pwd)
+        except Exception as e:
+            ok, message = False, "validator raised: {}".format(e)
+        payload = json.dumps({"ok": bool(ok),
+                              "ssid": ssid,
+                              "message": message})
+        print("config_server: /validate ssid='{}' -> ok={} ({})".format(
+            ssid, ok, message))
+        return ("HTTP/1.1 200 OK\r\n"
+                "Content-Type: application/json\r\n\r\n{}".format(payload))

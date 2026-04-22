@@ -8,6 +8,11 @@ Adds two protections on top of the previous no-op boot.py:
    escape hatch for when main.py hangs, starves USB, or otherwise misbehaves
    -- we never need to re-flash the chip or race an 8-second window again.
 
+   Note: main.py polls the same pin at runtime for a separate purpose
+   (a short click forces AP mode). The two uses don't conflict because
+   this check only runs once at reset; by the time main.py is polling,
+   boot.py is already done.
+
 2. Fail-safe wifi fallback is intentionally removed.
    The previous boot.py's `except` branch called WifiManager.setup_network()
    directly, which also starts the AP and (on ESP32-S3) may starve the native
