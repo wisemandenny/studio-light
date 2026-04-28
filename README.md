@@ -28,11 +28,17 @@ A Wi-Fi–connected recording light for Ableton Live. When you hit record, the l
 
 ## Choosing the Light Color
 
-By default, the recording light glows **red**. To pick a different color, change the color of your Ableton **Master track**:
+By default, the recording light glows **red**. To pick a different color, change the color of your Ableton **Main track**:
 
-1. Right-click the Master track header in the mixer.
+1. Right-click the Main track header in the mixer.
 2. Pick a color from the palette.
 
 The recording light will switch to that color the next time you record, and will also update live if you change it while recording.
 
-To revert to the default red, change the Master track color back to its original (or any color that matches what it was when Ableton started). The Master track color is only used as the recording light color picker because it isn't typically changed for other reasons.
+To revert to the default red, change the Main track color back to its original (or any color that matches what it was when Ableton started). The Main track color is only used as the recording light color picker because it isn't typically changed for other reasons.
+
+## Sleep Mode
+
+The Ableton script sends a heartbeat to the light every ~30 seconds. If the light doesn't receive any traffic (heartbeat, record on/off) for **1 hour**, it enters idle mode: LEDs turn off and the device slows down to save power while staying on Wi-Fi.
+
+When you open Ableton the next time, the script automatically sends a heartbeat and the light wakes up within a few seconds -- no manual intervention needed.

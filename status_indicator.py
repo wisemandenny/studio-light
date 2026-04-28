@@ -35,7 +35,10 @@ State -> visual map:
                                  overwritten per-datagram by the Ableton
                                  plugin via ``LightController.light_color``
                                  so the user can "pick" a colour inside
-                                 Ableton by changing their master track).
+                                 Ableton by changing their Main track).
+  * ``idle``                  -- off (no Ableton client for 1 hour; the
+                                 main loop is also running at 0.2 Hz to
+                                 save power while keeping WiFi alive).
   * anything else             -- off
 
 ``pixel_order`` defaults to ``GRB`` to match common WS2812/WS2812B strips.
@@ -117,18 +120,18 @@ _GAMMA_LUT_B = _build_channel_lut(_B_GAMMA, _B_GAIN)
 # So each "shake" is a short burst of three decaying oscillations, then a
 # dead-still pause, and the ball rotates as a rigid body rather than just
 # flexing its band. Tuned so one full cycle fits comfortably inside
-# main.py's _CONNECT_CELEBRATION_MS (4000ms); leftover time repeats the
+# main.py's _CONNECT_CELEBRATION_MS (11000ms); leftover time repeats the
 # cycle, which reads fine because each episode is seamless.
-_POKEBALL_FADE_IN_MS = 250
-_POKEBALL_SHAKE_WOBBLE_MS = 750    # active shaking inside the episode
-_POKEBALL_SHAKE_PAUSE_MS = 500     # dead-still settle after each burst
+_POKEBALL_FADE_IN_MS = 500
+_POKEBALL_SHAKE_WOBBLE_MS = 1500   # active shaking inside the episode
+_POKEBALL_SHAKE_PAUSE_MS = 1000    # dead-still settle after each burst
 _POKEBALL_SHAKE_EPISODE_MS = _POKEBALL_SHAKE_WOBBLE_MS + _POKEBALL_SHAKE_PAUSE_MS
 _POKEBALL_SHAKE_OSCILLATIONS = 4   # mini-wobbles inside one burst
 _POKEBALL_SHAKES = 3
 # Extra breath between the last wobble and the capture-flash. Gives the
 # "is it going to stay shut?" beat from the anime before the sparkle.
-_POKEBALL_PRE_FLASH_MS = 450
-_POKEBALL_BUTTON_FLASH_MS = 600
+_POKEBALL_PRE_FLASH_MS = 900
+_POKEBALL_BUTTON_FLASH_MS = 1200
 # Peak tilt of the rigid-body rotation, in radians (~20 deg).
 _POKEBALL_SHAKE_TILT = 0.35
 # Lateral translation (in matrix pixels) applied in the direction of the
@@ -346,6 +349,8 @@ class StatusIndicator:
         elif state == "light_on":
             self._render_solid(self._scale(self.light_on_color, 1.0))
         elif state == "light_off":
+            self._render_solid((0, 0, 0))
+        elif state == "idle":
             self._render_solid((0, 0, 0))
         else:
             self._render_solid((0, 0, 0))

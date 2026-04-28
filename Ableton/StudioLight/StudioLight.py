@@ -6,9 +6,9 @@ import Live  # type: ignore[import-not-found]  # provided by Ableton runtime
 
 
 # Red is the canonical "recording in progress" colour. The light only
-# deviates from this when the user intentionally changes the master
+# deviates from this when the user intentionally changes the Main
 # track's colour -- that's the in-Ableton "color picker" for this
-# device. We chose the master track specifically because nobody ever
+# device. We chose the Main track specifically because nobody ever
 # changes it for normal musical reasons, so any change is almost
 # certainly "I want my recording light to be this colour".
 _DEFAULT_COLOR = (255, 0, 0)
@@ -29,37 +29,42 @@ def _unpack_rgb(packed):
 
 
 class StudioLight:
+    _HEARTBEAT_TICKS = 300  # ~30s at ~100ms/tick
+
     def __init__(self, c_instance):
         self.c_instance = c_instance
         self.song = self.c_instance.song()
-        self.master_track = self.song.master_track
+        self.main_track = self.song.master_track
 
         self.target_mac = self._canonical_mac("a0:f2:62:eb:2e:a4")
         self.ip = None
         self.port = 8000
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-        # Baseline the master track's colour at load time. As long as
+        # Baseline the Main track's colour at load time. As long as
         # the user hasn't touched it, we keep sending the default red;
         # the moment it differs from this baseline we treat that as the
         # user "picking" a new recording-light colour. Changing it back
         # to the baseline reverts the light to red, which matches the
         # natural expectation of "undo my pick".
-        self._baseline_master_color = self._current_master_color_int()
-        self._master_color_listener_attached = False
+        self._baseline_main_color = self._current_main_color_int()
+        self._main_color_listener_attached = False
 
         self.find_ip_by_mac()
         self.song.add_record_mode_listener(self.on_record_mode_changed)
 
-        # Master-track colour listener is best-effort: if a given Live
-        # version doesn't expose it, we silently fall back to only
-        # re-reading the colour on record-mode toggles, which is still
-        # functional -- just not live-updating while a take is rolling.
+        # Main-track colour listener is best-effort: if a given Live
+        # version doesn't expose it, we fall back to only re-reading the
+        # colour on record-mode toggles, which is still functional --
+        # just not live-updating while a take is rolling.
         try:
-            self.master_track.add_color_listener(self.on_master_color_changed)
-            self._master_color_listener_attached = True
-        except Exception:
-            pass
+            self.main_track.add_color_listener(self.on_main_color_changed)
+            self._main_color_listener_attached = True
+            self._log("Main track color listener attached")
+        except Exception as e:
+            self._log("Main track color listener FAILED: {}".format(e))
+
+        self.c_instance.schedule_message(1, self._send_heartbeat)
 
     @staticmethod
     def _canonical_mac(mac_str):
@@ -147,29 +152,39 @@ class StudioLight:
         except Exception as e:
             self.c_instance.show_message("ARP Scan Error: " + str(e))
 
-    def _current_master_color_int(self):
-        """Read the raw packed colour int off the master track.
+    def _log(self, msg):
+        try:
+            self.c_instance.log_message("StudioLight: " + msg)
+        except Exception:
+            pass
+
+    def _current_main_color_int(self):
+        """Read the raw packed colour int off the Main track.
 
         Returns ``None`` if the attribute is missing or unreadable, so
         ``_effective_color`` can fall back to the default cleanly.
         """
         try:
-            return int(self.master_track.color)
-        except Exception:
+            return int(self.main_track.color)
+        except Exception as e:
+            self._log("main_track.color read failed: {}".format(e))
             return None
 
     def _effective_color(self):
         """Return the RGB tuple to send with the next ``ON`` datagram.
 
-        While the master track's colour matches what it was when the
+        While the Main track's colour matches what it was when the
         script loaded, we treat that as "user hasn't picked anything" and
-        send the default red. As soon as the user changes the master
-        colour, that becomes the recording-light colour.
+        send the default red. As soon as the user changes the Main
+        track's colour, that becomes the recording-light colour.
         """
-        current = self._current_master_color_int()
-        if current is None or current == self._baseline_master_color:
+        current = self._current_main_color_int()
+        if current is None or current == self._baseline_main_color:
             return _DEFAULT_COLOR
-        return _unpack_rgb(current)
+        rgb = _unpack_rgb(current)
+        self._log("effective_color: baseline={} current={} -> rgb={}".format(
+            self._baseline_main_color, current, rgb))
+        return rgb
 
     def _send(self, msg):
         if not self.ip:
@@ -182,6 +197,15 @@ class StudioLight:
                 self.sock.sendto(msg.encode(), (self.ip, self.port))
             except Exception:
                 pass
+
+    def _send_heartbeat(self):
+        if self.ip:
+            try:
+                self.sock.sendto(b"HEARTBEAT", (self.ip, self.port))
+            except Exception:
+                pass
+        self.c_instance.schedule_message(self._HEARTBEAT_TICKS,
+                                         self._send_heartbeat)
 
     def on_record_mode_changed(self):
         if not self.ip:
@@ -196,7 +220,7 @@ class StudioLight:
         else:
             self._send("OFF")
 
-    def on_master_color_changed(self):
+    def on_main_color_changed(self):
         """Live-update the light if the user changes the colour mid-take.
 
         Outside of recording there's nothing to do: the next record-on
@@ -205,6 +229,7 @@ class StudioLight:
         transitions, which is the user's natural "is the light working?"
         checkpoint.
         """
+        self._log("on_main_color_changed fired")
         if self.ip and self.song.record_mode:
             r, g, b = self._effective_color()
             self._send("ON {} {} {}".format(r, g, b))
@@ -214,9 +239,9 @@ class StudioLight:
             self.song.remove_record_mode_listener(self.on_record_mode_changed)
         except Exception:
             pass
-        if self._master_color_listener_attached:
+        if self._main_color_listener_attached:
             try:
-                self.master_track.remove_color_listener(self.on_master_color_changed)
+                self.main_track.remove_color_listener(self.on_main_color_changed)
             except Exception:
                 pass
         try:

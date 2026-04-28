@@ -20,10 +20,13 @@ honours that too via SAFE MODE).
 
 Display policy when Wi-Fi is connected:
   * For the first ``_CONNECT_CELEBRATION_MS`` ms after joining, show the
-    8x8 trippy rainbow plasma so the operator visually confirms the join
+    Pokeball capture animation so the operator visually confirms the join
     from across the room.
   * After that, the strip reflects the LightController: solid red when
     Ableton has asked for ``ON``, fully off otherwise.
+  * If no UDP traffic arrives for ``_IDLE_TIMEOUT_MS`` (1 hour), the
+    device enters idle mode: LEDs off, loop slowed to 0.2 Hz. Any
+    incoming packet (heartbeat, ON, OFF) resumes normal operation.
   * If the link drops, we fall back to the Wi-Fi indicator patterns.
 
 Display policy while in AP mode:
@@ -63,7 +66,7 @@ _UDP_LISTEN_PORT = 8000
 # Long enough for the full fade-in -> three shakes -> settle -> capture
 # flash sequence to complete visibly; short enough that it doesn't delay
 # actual recording work.
-_CONNECT_CELEBRATION_MS = 5500
+_CONNECT_CELEBRATION_MS = 11000
 # Treat the config page as "actively being used" for this long after the
 # last HTTP request on the config server. Inside this window, ap_mode
 # switches to the auth-failed flash pattern if every known password has
@@ -79,6 +82,13 @@ _CONFIG_ACTIVITY_WINDOW_MS = 30000
 # between a physical click and the first ripple frame.
 _BOOT_BUTTON_PIN = 0
 _BOOT_BUTTON_DEBOUNCE_TICKS = 2
+
+# Idle mode: when connected but no UDP traffic from Ableton for this long,
+# the device turns off its LEDs and slows the loop to save power while
+# keeping WiFi alive. Any incoming packet resumes normal operation within
+# one idle-loop period.
+_IDLE_TIMEOUT_MS = 3600000   # 1 hour
+_IDLE_LOOP_PERIOD_MS = 5000  # 0.2 Hz
 
 
 def _countdown_blip(pin, num_pixels, seconds):
@@ -180,6 +190,8 @@ def run():
     connected_at_ms = None
     boot_low_ticks = 0
     boot_fired = False
+    idle = False
+    last_client_ms = 0
 
     while True:
         now_ms = time.ticks_ms()
@@ -231,11 +243,25 @@ def run():
             controller.tick()
             # Keep the indicator's "on" colour in sync with whatever the
             # Ableton plugin is currently sending. The plugin transmits
-            # RGB with every ON, so this is cheap and means a master-
+            # RGB with every ON, so this is cheap and means a Main-
             # track colour change mid-take lights up on the next render.
             indicator.light_on_color = controller.light_color
+
+            # Idle mode: track the last time Ableton sent us anything.
+            if controller.last_message_at_ms != last_client_ms:
+                last_client_ms = controller.last_message_at_ms
+                if idle:
+                    print("main: waking from idle")
+                    idle = False
+
             if time.ticks_diff(now_ms, connected_at_ms) < _CONNECT_CELEBRATION_MS:
                 display_state = "connected"
+            elif (last_client_ms > 0
+                  and time.ticks_diff(now_ms, last_client_ms) > _IDLE_TIMEOUT_MS):
+                if not idle:
+                    print("main: entering idle mode (no client for 1h)")
+                    idle = True
+                display_state = "idle"
             else:
                 display_state = "light_on" if controller.light_on else "light_off"
         elif wifi.state == "ap_mode":
@@ -256,7 +282,7 @@ def run():
         if wifi.state == "ap_mode":
             server.tick()
 
-        time.sleep_ms(_LOOP_PERIOD_MS)
+        time.sleep_ms(_IDLE_LOOP_PERIOD_MS if idle else _LOOP_PERIOD_MS)
 
 
 run()

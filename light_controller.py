@@ -11,6 +11,9 @@ are accepted:
   colour-picker feature.
 * ``OFF`` -- turn the light off. Colour is unchanged so the next ``ON``
   without an RGB resumes the previous colour.
+* ``HEARTBEAT`` -- keepalive from the Ableton script. Updates
+  ``last_message_at_ms`` without changing light state. Used by the
+  main loop's idle-mode timeout.
 
 The plugin sends each command five times for reliability, so this
 listener drains all pending datagrams on every tick and keeps only the
@@ -117,6 +120,8 @@ class LightController:
                 if self.light_on:
                     print("light_controller: OFF from", addr[0])
                 self.light_on = False
+            elif msg == "HEARTBEAT":
+                pass
             else:
                 print("light_controller: ignoring unknown message:", repr(msg))
             self.last_message_at_ms = time.ticks_ms()
